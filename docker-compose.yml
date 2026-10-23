@@ -1,10 +1,19 @@
 services:
   db:
     image: postgres:16
-    environment: {POSTGRES_USER: ds, POSTGRES_PASSWORD: ds, POSTGRES_DB: docusign}
-    ports: ["5432:5432"]
+    environment:
+      POSTGRES_DB: docusign
+      POSTGRES_USER: ds
+      POSTGRES_PASSWORD: ds
+    ports:
+      - "5432:5432"
+
   minio:
-    image: minio/minio
+    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     command: server /data --console-address ":9001"
-    environment: {MINIO_ROOT_USER: minioadmin, MINIO_ROOT_PASSWORD: minioadmin}
-    ports: ["9000:9000", "9001:9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"

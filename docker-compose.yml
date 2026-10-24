@@ -2,11 +2,13 @@ services:
   db:
     image: postgres:16
     environment:
-      POSTGRES_DB: docusign
-      POSTGRES_USER: ds
-      POSTGRES_PASSWORD: ds
+      POSTGRES_DB: docusign_master
+      POSTGRES_USER: docusign
+      POSTGRES_PASSWORD: change-me
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
   minio:
     image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
@@ -17,3 +19,8 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
+    volumes:
+      - ./secrets:/app/secrets:ro
+
+volumes:
+  postgres_data:

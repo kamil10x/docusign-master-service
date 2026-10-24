@@ -81,3 +81,6 @@ dist/
 data/
 tmp/
 temp/
+
+secrets/
+*.key

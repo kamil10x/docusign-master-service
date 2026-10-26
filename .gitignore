@@ -84,3 +84,10 @@ temp/
 
 secrets/
 *.key
+
+.env
+*.pem
+*.key
+__pycache__/
+.venv/
+.pytest_cache/

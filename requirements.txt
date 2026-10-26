@@ -13,3 +13,4 @@ pyarrow
 pytest
 pytest-asyncio
 respx
+pyjwt

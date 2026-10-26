@@ -1,0 +1,1 @@
+method, path = "POST", "/api/validate-credentials"

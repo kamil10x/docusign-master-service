@@ -1,58 +1,118 @@
+"""HMAC request authentication.
+
+Client sends:
+    X-Timestamp: unix seconds
+    X-Signature: hex(HMAC_SHA256(secret, f"{timestamp}.{METHOD}.{path}.{sha256(body)}"))
+"""
 import hashlib
 import hmac
 import time
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.config import settings
+from app.core.config import get_settings
 
-
-def _secrets() -> dict[str, str]:
-    keys = {
-        "core": settings.HMAC_SECRET_KEY_CORE,
-        "engineer": settings.HMAC_SECRET_KEY_ENGINEER,
-    }
-    return {k: v for k, v in keys.items() if v}  # an empty secret is never valid
+OPEN_PATHS = {"/api/health", "/docs", "/openapi.json", "/redoc"}
 
 
-def compute_signature(secret: str, timestamp: str, method: str, path_with_query: str, body: bytes) -> str:
+def compute_signature(secret: str, timestamp: str, method: str, path: str, body: bytes) -> str:
     body_hash = hashlib.sha256(body).hexdigest()
-    message = f"{timestamp}\n{method.upper()}\n{path_with_query}\n{body_hash}"
-    return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
+    message = f"{timestamp}.{method.upper()}.{path}.{body_hash}".encode()
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
 
-def _unauthorized(detail: str = "Invalid or missing signature") -> HTTPException:
-    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+async def verify_hmac(request: Request) -> bool:
+    """Verify HMAC authentication for FastAPI route dependencies."""
 
-
-async def verify_hmac(request: Request) -> str:
-    """FastAPI dependency. Returns the authenticated key id ('core' | 'engineer')."""
-    if not settings.HMAC_ENABLED:
-        return "disabled"
+    from app.config import settings
 
     key_id = request.headers.get("X-Key-Id")
     timestamp = request.headers.get("X-Timestamp")
     signature = request.headers.get("X-Signature")
-    if not (key_id and timestamp and signature):
-        raise _unauthorized()
 
-    secret = _secrets().get(key_id)
-    if secret is None:
-        raise _unauthorized()  # same message as a bad signature, so key ids can't be probed
+    if not key_id or not timestamp or not signature:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing HMAC authentication headers",
+        )
+
+    if key_id == "core":
+        secret = settings.HMAC_SECRET_KEY_CORE
+    elif key_id == "engineer":
+        secret = settings.HMAC_SECRET_KEY_ENGINEER
+    else:
+        raise HTTPException(
+            status_code=401,
+            detail="Unknown key ID",
+        )
 
     try:
         ts = int(timestamp)
     except ValueError:
-        raise _unauthorized()
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid timestamp",
+        )
+
     if abs(time.time() - ts) > settings.HMAC_SIGNATURE_MAX_AGE:
-        raise _unauthorized("Request timestamp expired")
+        raise HTTPException(
+            status_code=401,
+            detail="Timestamp outside allowed window",
+        )
 
     body = await request.body()
-    path = request.url.path + (f"?{request.url.query}" if request.url.query else "")
-    expected = compute_signature(secret, timestamp, request.method, path, body)
+
+    expected = compute_signature(
+        secret=secret,
+        timestamp=timestamp,
+        method=request.method,
+        path=request.url.path,
+        body=body,
+    )
 
     if not hmac.compare_digest(expected, signature):
-        raise _unauthorized()
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid signature",
+        )
 
-    request.state.key_id = key_id
-    return key_id
+    return True
+
+
+def _unauthorized(detail: str) -> JSONResponse:
+    return JSONResponse(status_code=401, content={"detail": detail})
+
+
+class HMACAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in OPEN_PATHS:
+            return await call_next(request)
+
+        settings = get_settings()
+        if not settings.hmac_secret:
+            return JSONResponse(
+                status_code=500, content={"detail": "HMAC secret is not configured"}
+            )
+
+        timestamp = request.headers.get("X-Timestamp")
+        signature = request.headers.get("X-Signature")
+        if not timestamp or not signature:
+            return _unauthorized("Missing X-Timestamp or X-Signature header")
+
+        try:
+            ts = int(timestamp)
+        except ValueError:
+            return _unauthorized("Invalid X-Timestamp")
+        if abs(time.time() - ts) > settings.hmac_max_skew_seconds:
+            return _unauthorized("Timestamp outside allowed window")
+
+        body = await request.body()
+        expected = compute_signature(
+            settings.hmac_secret, timestamp, request.method, request.url.path, body
+        )
+        if not hmac.compare_digest(expected, signature):
+            return _unauthorized("Invalid signature")
+
+        return await call_next(request)

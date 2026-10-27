@@ -148,7 +148,7 @@ async def test_account_info_picks_default(private_key_pem):
 # ---------------------------------------------------- HMAC + route (API)
 @pytest.fixture
 def api_client(monkeypatch, private_key_pem):
-    monkeypatch.setenv("HMAC_SECRET", "s3cret")
+    monkeypatch.setenv("HMAC_SECRET_KEY_CORE", "s3cret")
     monkeypatch.setenv("DOCUSIGN_INTEGRATION_KEY", "ik-123")
     monkeypatch.setenv("DOCUSIGN_USER_ID", "user-guid")
     monkeypatch.setenv("DOCUSIGN_PRIVATE_KEY", private_key_pem)
@@ -161,9 +161,17 @@ def api_client(monkeypatch, private_key_pem):
 
 def signed_headers(method, path, body=b"", secret="s3cret", ts=None):
     ts = str(ts if ts is not None else int(time.time()))
+
     return {
+        "X-Key-Id": "core",
         "X-Timestamp": ts,
-        "X-Signature": compute_signature(secret, ts, method, path, body),
+        "X-Signature": compute_signature(
+            secret,
+            ts,
+            method,
+            path,
+            body,
+        ),
     }
 
 

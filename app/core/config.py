@@ -23,6 +23,14 @@ class Settings:
     docusign_user_id: str = field(
         default_factory=lambda: os.getenv("DOCUSIGN_USER_ID", "")
     )
+    docusign_base_url: str = field(
+        default_factory=lambda: os.getenv(
+            "DOCUSIGN_BASE_URL", "https://demo.docusign.net"
+        )
+    )
+    docusign_account_id: str = field(
+        default_factory=lambda: os.getenv("DOCUSIGN_ACCOUNT_ID", "")
+    )
     # Sandbox: account-d.docusign.com | Production: account.docusign.com
     docusign_auth_host: str = field(
         default_factory=lambda: os.getenv("DOCUSIGN_AUTH_HOST", "account-d.docusign.com")

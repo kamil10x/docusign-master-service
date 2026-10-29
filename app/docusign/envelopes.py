@@ -83,3 +83,21 @@ def iter_envelopes(
     """Yield individual envelopes instead of raw pages."""
     for page in iter_envelope_pages(client, *args, **kwargs):
         yield from page.get("envelopes", [])
+
+def get_envelope_recipients(
+    client: DocuSignClient,
+    envelope_id: str,
+) -> dict[str, Any]:
+    """Fetch recipients for a specific envelope."""
+    return client.get(
+        f"/envelopes/{envelope_id}/recipients",
+        params={"include_tabs": "false"},
+    )
+
+
+def get_envelope_documents(
+    client: DocuSignClient,
+    envelope_id: str,
+) -> dict[str, Any]:
+    """Fetch documents for a specific envelope."""
+    return client.get(f"/envelopes/{envelope_id}/documents")

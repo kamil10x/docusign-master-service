@@ -2,13 +2,11 @@
 
 ## 1. Overview
 
-This document records the verification results for the DocuSign sandbox envelope listing, retrieval, pagination, draft status filtering, rate limiting, and retry handling.
+This document records verification results for DocuSign sandbox envelope listing, retrieval, pagination, draft status filtering, rate limiting, retry handling, recipients, documents, and templates.
 
-**Project:** `docusign-master-service`
-
-**Environment:** DocuSign Sandbox
-
-**Roadmap coverage:** Day 8 and Day 9
+- **Project:** `docusign-master-service`
+- **Environment:** DocuSign Sandbox
+- **Roadmap coverage:** Day 8, Day 9, and subsequent endpoint implementation and verification
 
 ## 2. Test Envelope Seeding
 
@@ -51,8 +49,6 @@ The five sent envelopes and the draft envelope were confirmed through individual
 
 **Command:** `python -m scripts.verify_envelope_pagination`
 
-### Results
-
 | Test | Result |
 |---|---|
 | Date-range listing | PASS |
@@ -86,13 +82,9 @@ In the tested sandbox configuration, the unfiltered listing returned the five se
 
 ## 6. Rate Limiting and Retry Verification
 
-The rate-limiting and retry utilities were tested as part of Day 9.
-
 **Modules:**
 - `app/utils/rate_limiter.py`
 - `app/utils/retry.py`
-
-### Retry Test Results
 
 | Test | Result |
 |---|---|
@@ -104,46 +96,29 @@ The rate-limiting and retry utilities were tested as part of Day 9.
 | Non-retryable HTTP status codes (400, 401, 404) | PASS |
 | Backoff bounds | PASS |
 | Parse `Retry-After` | PASS |
+| Mocked 429 response followed by success | PASS |
+| Mocked 503 response followed by success | PASS |
 
-These tests confirm the retry utility's tested behavior for retryable errors, retry limits, backoff bounds, and `Retry-After` handling.
+The tests verify retry behavior, retry limits, backoff bounds, and handling of `Retry-After`. The 429 and 503 endpoint retry scenarios use mocked HTTP responses rather than live sandbox failures.
 
-## 7. Full Test Suite Verification
+## 7. Full Automated Test Suite
 
 **Command:** `python -m pytest -v`
 
 | Result | Count |
 |---|---:|
-| Tests collected | 35 |
-| Tests passed | 35 |
+| Tests collected | 41 |
+| Tests passed | 41 |
 | Tests failed | 0 |
 | Warnings | 1 |
-| Execution time | 10.30 seconds |
 
-All 35 collected tests passed, covering authentication, HMAC verification, retry handling, and credential validation.
+All 41 tests passed, covering authentication, HMAC verification, retry handling, credential validation, endpoint helpers, and template pagination.
 
 One Starlette deprecation warning was reported for the `httpx` integration with `TestClient`. It did not cause test failures.
 
-**Note:** The standalone MinIO connection check was also successful, and the `docusign-documents` bucket was created. This is recorded as a separate storage verification rather than an envelope-listing test.
+**Separate storage verification:** The standalone MinIO connection check was successful, and the `docusign-documents` bucket was created. This is recorded separately from envelope and endpoint testing.
 
-## 8. Conclusion
+## 8. Recipients and Documents Sandbox Verification
 
-### Day 8 — Envelope Listing and Pagination
+**Verification script:** `scripts/verify_new_endpoints.py`
 
-**Status: COMPLETED**
-
-- Created six sandbox test envelopes.
-- Retrieved all six envelopes individually.
-- Verified date-range listing.
-- Verified three-page offset pagination with page size two.
-- Confirmed five sent envelopes were returned without duplicates.
-- Verified draft retrieval through the `created` status filter.
-
-### Day 9 — Rate Limiting and Retry Handling
-
-**Status: IMPLEMENTED AND TESTED**
-
-- Implemented the rate-limiting and retry utility modules.
-- Verified retry behavior, `Retry-After` handling, retryable status codes, maximum attempts, and backoff bounds.
-- Confirmed that all 35 tests in the current suite passed.
-
-**Overall:** Day 8 and Day 9 work is verified based on the sandbox checks and current automated tests. The separate Day 14 integration tests for envelope pagination and retry handling should still be confirmed when that milestone is reached.

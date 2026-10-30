@@ -18,6 +18,40 @@ from app.utils.retry import retry_call
 class DocuSignClient:
     """Authenticated, rate-limited, retrying synchronous DocuSign client."""
 
+    def list_envelopes(
+        self,
+        from_date: str,
+        start_position: int = 0,
+        count: int = 100,
+    ) -> dict:
+        return self.get(
+            "/envelopes",
+            params={
+                "from_date": from_date,
+                "start_position": start_position,
+                "count": count,
+            },
+        )
+
+
+    def list_templates(
+        self,
+        start_position: int = 0,
+        count: int = 100,
+    ) -> dict:
+        return self.get(
+            "/templates",
+            params={
+                "start_position": start_position,
+                "count": count,
+            },
+        )
+
+    def get_envelope_recipients(self, envelope_id: str) -> dict:
+        return self.get(f"/envelopes/{envelope_id}/recipients")
+
+    def get_envelope_documents(self, envelope_id: str) -> dict:
+        return self.get(f"/envelopes/{envelope_id}/documents")
     def __init__(
         self,
         auth,

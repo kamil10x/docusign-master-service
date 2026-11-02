@@ -1,0 +1,13 @@
+{
+    "resultSetSize": 30,
+    "totalSetSize": 130,
+    "startPosition": "100",
+    "envelopes": [
+        {
+        "envelopeId": "env-101",
+        "status": "sent",
+        "emailSubject": "Test Envelope 101",
+        "createdDateTime": "2026-10-21T10:00:00Z"
+        }
+    ]
+}

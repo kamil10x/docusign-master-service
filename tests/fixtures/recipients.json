@@ -1,0 +1,23 @@
+{
+    "signers": [
+        {
+        "recipientId": "1",
+        "name": "Test Signer",
+        "email": "signer@example.com",
+        "status": "completed",
+        "routingOrder": "1",
+        "sentDateTime": "2026-10-20T10:05:00Z",
+        "deliveredDateTime": "2026-10-20T10:10:00Z",
+        "signedDateTime": "2026-10-20T10:30:00Z"
+        }
+    ],
+    "carbonCopies": [
+        {
+        "recipientId": "2",
+        "name": "Test Copy",
+        "email": "copy@example.com",
+        "status": "completed",
+        "routingOrder": "2"
+        }
+    ]
+}

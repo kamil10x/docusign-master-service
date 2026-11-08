@@ -49,6 +49,15 @@ class JobCheckpoint(Base):
 
     job: Mapped[Job] = relationship(back_populates="checkpoints")
 
+    @property
+    def stage(self) -> str:
+        return self.resource_type
+
+    @property
+    def counts(self) -> dict:
+        if isinstance(self.cursor, dict):
+            return dict(self.cursor.get("_counts", {}))
+        return {}
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"

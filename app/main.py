@@ -1,21 +1,35 @@
+
 from fastapi import Depends, FastAPI
 
-from app.core.hmac_auth import verify_hmac
+from app.core.hmac_auth import verify_hmac, HMACAuthMiddleware
 
-from app.api import health, validate_credentials  # your actual modules
+from app.api import health, validate_credentials
 
 from app.api.validate import router as validate_router
-from app.core.hmac_auth import HMACAuthMiddleware
+from app.api.scan import router as scan_router
+from app.api.normalization import router as normalization_router
+
 
 app = FastAPI(title="DocuSign Master Service")
-app.add_middleware(HMACAuthMiddleware)
-app.include_router(validate_router)
 
-# public
+# HMAC middleware protects all non-public routes
+app.add_middleware(HMACAuthMiddleware)
+
+# Existing routers
+app.include_router(validate_router)
+app.include_router(normalization_router)
+
+# Public routes
 app.include_router(health.router, prefix="/api")
 
-# protected
+# Protected routes
 protected = [Depends(verify_hmac)]
 
-app.include_router(validate_credentials.router, prefix="/api", dependencies=protected)
-# later: scan, normalization, maintenance get the same `dependencies=protected`
+app.include_router(
+    validate_credentials.router,
+    prefix="/api",
+    dependencies=protected
+)
+
+# Scan router: authentication handled by HMAC middleware
+app.include_router(scan_router)

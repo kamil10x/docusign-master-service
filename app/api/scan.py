@@ -16,6 +16,13 @@ class ScanRequest(BaseModel):
 
 
 def _job_view(job, checkpoint=None) -> dict:
+    stage = None
+    counts = {}
+    if checkpoint is not None:
+        stage = getattr(checkpoint, "stage", None) or getattr(checkpoint, "resource_type", None)
+        counts = getattr(checkpoint, "counts", None)
+        if counts is None and isinstance(getattr(checkpoint, "cursor", None), dict):
+            counts = checkpoint.cursor.get("_counts", {})
     return {
         "job_id": str(job.id),
         "status": job.status,
@@ -23,15 +30,18 @@ def _job_view(job, checkpoint=None) -> dict:
         "finished_at": job.completed_at,
         "heartbeat_at": job.updated_at,
         "error": job.error_message,
-        "stage": checkpoint.stage if checkpoint else None,
-        "counts": checkpoint.counts if checkpoint else {},
+        "stage": stage,
+        "counts": counts or {},
     }
 
 
 @router.post("", status_code=202)
 def start_scan(req: ScanRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    print('DEBUG: start_scan entered', flush=True)
     params = {k: v for k, v in req.model_dump().items() if v is not None}
+    print('DEBUG: creating scan job', flush=True)
     job = JobService(db).create_job("scan", params)
+    print('DEBUG: scan job created:', job.id, flush=True)
     background_tasks.add_task(run_scan_in_background, str(job.id))  # sync fn -> runs in threadpool
     return {"job_id": str(job.id), "status": job.status}
 

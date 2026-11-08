@@ -1,4 +1,3 @@
-
 services:
   app:
     build: .
@@ -10,7 +9,10 @@ services:
       - db
       - minio
     volumes:
+      - ./app:/app/app
       - ./secrets:/app/secrets:ro
+      - ./data:/app/data
+      - ./tests:/app/tests
 
   db:
     image: postgres:16
@@ -34,7 +36,6 @@ services:
       - "9001:9001"
     volumes:
       - minio_data:/data
-      - ./secrets:/app/secrets:ro
 
 volumes:
   postgres_data:

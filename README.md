@@ -1,122 +1,190 @@
 # DocuSign Master Service
 
-A FastAPI service that pulls eSignature data from DocuSign (envelopes, recipients, documents, templates), handles rate limits and resumable scans, normalizes the data into PostgreSQL tables, and stores Parquet output in MinIO.
+A backend service that pulls eSignature data from DocuSign (envelopes, recipients,
+documents, templates), survives rate limits and crashes, normalizes the data into
+tables, and stores the results as Parquet and JSON in MinIO.
 
-Design details live in [DESIGN.md](DESIGN.md).
+**Stack:** Python 3.13, FastAPI, PostgreSQL, SQLAlchemy + Alembic, MinIO, Docker Compose.
 
-## Status
+---
 
-| Week | Milestone | Status |
-|------|-----------|--------|
-| 1 | Setup, sandbox, auth (valid token + base URL) | Done |
-| 2 | Envelope paging + rate-limit handling | Next |
-| 3 | Normalization tables | Planned |
-| 4 | Parquet upload, error handling, resume, tests, submission | Planned |
+## How it works
 
-### Week 1 milestone
+```
+POST /api/scan ──► ExtractionService (background task)
+                     envelopes → recipients → documents → templates
+                     • JWT Grant auth, token cached
+                     • 429 handling (Retry-After) + retry with backoff and jitter
+                     • checkpoint saved after every page (resume after a crash)
+                     • failed external calls recorded in a dead-letter table
+                     ▼
+                  data/raw/<job_id>/<resource>/page_000000.json
 
-The service can authenticate against the DocuSign developer sandbox using the JWT Grant flow, cache the access token, and resolve the account's base URL through the userinfo call. `POST /api/validate-credentials` confirms this end to end and returns `valid: true` against the real sandbox.
+POST /api/normalization/{job_id} ──► NormalizationService
+                     raw pages → Envelope / Recipient / Document / Template normalizers
+                     ├─► Job.result (JSONB in PostgreSQL)
+                     └─► MinIO: normalized/<job_id>/<table>.parquet
+                                normalized/<job_id>/<table>.json
+```
 
-## Tech stack
+Normalized tables: `envelopes`, `recipients`, `documents`, `templates`.
 
-Python, FastAPI, PostgreSQL (SQLAlchemy + Alembic), MinIO, Docker.
+---
 
-## Project layout
+## Project structure
 
 ```
 app/
-  api/          # routers: health, validate-credentials, scan, normalization, maintenance
-  core/         # settings, HMAC auth
-  db/           # SQLAlchemy models, session
-  docusign/     # DocuSignAuthClient (JWT Grant, token cache), userinfo
-  normalizers/  # (Week 3)
-  services/     # JobService
-  utils/
-tests/
+├── main.py                  FastAPI app, routers, HMAC middleware
+├── config.py                Settings loaded from .env (pydantic-settings)
+├── api/                     health, validate_credentials, scan, normalization, maintenance, audit
+├── core/                    hmac_auth, rate_limiter, retry, dlq, config helpers
+├── db/                      SQLAlchemy models, session
+├── docusign/                auth client (JWT Grant), API client, envelopes, templates
+├── normalizers/             base + envelope, recipient, document, template
+├── services/                extraction, scan runner/stages, normalization (+ export),
+│                            job service, audit service, MinIO client
+└── utils/                   raw page storage, serializers (JSON/Parquet)
+alembic/                     database migrations
+scripts/                     helper scripts (seed envelopes, signed API calls)
+tests/                       unit and integration tests
 ```
 
-## Setup
+---
 
-### 1. Prerequisites
+## Getting started
 
-- Python 3.11+ (adjust to your version)
-- Docker and Docker Compose
-- A DocuSign developer sandbox account with an Integration Key, an RSA keypair, and one-time user consent granted
+### 1. Configure
 
-### 2. Configure environment
-
-Copy the example file and fill it in:
-
-```
-cp .env.example .env
+```bash
+cp .env.example .env        # Windows: copy .env.example .env
 ```
 
-| Variable | Purpose |
-|----------|---------|
-| `DOCUSIGN_INTEGRATION_KEY` | Integration Key (client ID) of your sandbox app |
-| `DOCUSIGN_USER_ID` | API username (GUID) of the impersonated user |
-| `DOCUSIGN_ACCOUNT_ID` | Sandbox account ID |
-| `DOCUSIGN_AUTH_SERVER` | `account-d.docusign.com` for the sandbox |
-| `DOCUSIGN_PRIVATE_KEY_PATH` | Path to the RSA private key (never commit this file) |
-| `HMAC_KEYS` | Active HMAC signing keys (two supported, for rotation) |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `MINIO_*` | MinIO endpoint, access key, secret key, bucket |
+Fill in `.env`. The main groups are:
 
-> Verify these names against your own `.env.example` and `app/core/config.py`; edit this table to match.
+| Group | Keys |
+|---|---|
+| Database | `DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DB_POOL_SIZE` |
+| MinIO | `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`, `MINIO_SECURE` |
+| DocuSign | `DOCUSIGN_INTEGRATION_KEY`, `DOCUSIGN_USER_ID`, `DOCUSIGN_ACCOUNT_ID`, `DOCUSIGN_AUTH_SERVER`, `DOCUSIGN_BASE_URL`, `DOCUSIGN_PRIVATE_KEY_PATH` |
+| Rate limits / paging | `DOCUSIGN_MAX_RETRIES_ON_429`, `DOCUSIGN_DEFAULT_RETRY_AFTER_SECONDS`, `DOCUSIGN_DEFAULT_PAGE_SIZE` |
+| Resilience | `EXTERNAL_CALL_MAX_RETRIES`, `EXTERNAL_CALL_RETRY_DELAYS`, `EXTERNAL_CALL_JITTER`, `DLQ_PAYLOAD_MAX_BYTES` |
+| HMAC | `HMAC_ENABLED`, `HMAC_SECRET_KEY_CORE`, `HMAC_SECRET_KEY_ENGINEER`, `HMAC_SIGNATURE_MAX_AGE` |
+| Job tracking | `JOB_HEARTBEAT_INTERVAL_SECONDS`, `JOB_CRASH_TIMEOUT_MINUTES` |
 
-### 3. Run
+Generate each HMAC key with:
 
-```
-docker compose up --build
-```
-
-Apply migrations:
-
-```
-alembic upgrade head
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-The API is then available at `http://localhost:8000` (interactive docs at `/docs`).
+Put the DocuSign RSA private key at `secrets/private.key`. **Never commit it.**
+Inside Docker use `MINIO_ENDPOINT=minio:9000`; from your own machine use `localhost:9000`.
 
-## Authentication
+### 2. Run
 
-### DocuSign
+```bash
+docker compose up -d --build
+docker compose exec app alembic upgrade head     # create / update tables
+curl http://localhost:8000/api/health            # {"status":"ok"}
+```
 
-`DocuSignAuthClient.get_access_token()` signs a JWT with the RSA private key and exchanges it for an access token using the JWT Grant flow. The token is cached in memory and refreshed shortly before it expires. Tokens are never logged.
+| Service | URL |
+|---|---|
+| API | http://localhost:8000 (docs at `/docs`) |
+| MinIO console | http://localhost:9001 |
+| PostgreSQL | localhost:5432 |
 
-### Calling this service (HMAC)
+`./data` is mounted into the container, so raw pages survive container restarts.
 
-Requests to protected endpoints must be signed. Each request carries a signature, a timestamp, and a nonce:
+---
 
-- The timestamp must be within the allowed clock-skew window.
-- A nonce can be used only once; replays are rejected.
-- Two keys are accepted at the same time so keys can be rotated without downtime.
+## Authentication (HMAC)
 
-See `app/core` for the exact header names and signing string.
+Every route except `/api/health` requires these headers:
 
-## API endpoints
+| Header | Value |
+|---|---|
+| `X-Key-Id` | `core` or `engineer` |
+| `X-Timestamp` | current Unix time in seconds |
+| `X-Signature` | `compute_signature(secret, timestamp, method, path, body)` |
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/health` | Liveness check |
-| `POST /api/validate-credentials` | Authenticates to DocuSign and returns whether the credentials are valid (token + base URL resolved) |
-| `/api/scan/*` | Scan jobs (Week 2+) |
-| `/api/normalization/*` | Normalization jobs (Week 3) |
-| `/api/maintenance/*` | Maintenance operations (Week 4) |
+The signature uses the secret for that key id, and requests older than
+`HMAC_SIGNATURE_MAX_AGE` seconds are rejected. The helper scripts below sign
+requests for you. See `app/core/hmac_auth.py` for the exact algorithm.
 
-## Database
+---
 
-Tables: `jobs`, `job_checkpoints`, `audit_logs`, `failed_external_calls`. Migrations are managed with Alembic.
+## API
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/health` | Liveness check (public) |
+| POST | `/api/validate-credentials` | Check DocuSign JWT credentials |
+| POST | `/api/scan` | Start a scan (`{"from_date": "2024-01-01"}`), returns `202` and a `job_id` |
+| GET | `/api/scan/{job_id}` | Status, stage, per-resource counts, heartbeat |
+| POST | `/api/scan/{job_id}/resume` | Resume from the latest checkpoint |
+| POST | `/api/scan/{job_id}/cancel` | Cancel a job |
+| POST | `/api/normalization/{job_id}` | Normalize a completed scan and export to MinIO |
+| GET | `/api/normalization/{job_id}/status` | Normalization and export status |
+| GET | `/api/normalization/{job_id}/results` | MinIO object paths per table |
+
+### Normalization details
+
+`POST /api/normalization/{job_id}` returns record counts and export paths.
+Add `?include_data=true` to also receive the full rows (can be very large).
+
+| Status | Meaning |
+|---|---|
+| 200 | Normalized and exported |
+| 400 | `job_id` is not a valid UUID |
+| 404 | Job not found |
+| 409 | Scan not completed, raw data missing for the job, or a run already in progress |
+| 500 | Normalization or export failed (see the audit log) |
+
+The result is saved in the database before the export. If MinIO fails, the data is kept,
+the failure is audited, and re-running is safe because export paths are fixed.
+
+### Try it
+
+```bash
+python call_scan.py                                            # start a scan
+python -m scripts.call_normalization <job_id>                  # run normalization
+python -m scripts.call_normalization <job_id> status
+python -m scripts.call_normalization <job_id> results
+```
+
+Read an exported file straight from MinIO:
+
+```bash
+docker compose exec app python -c "from app.services.minio_client import minio_client as m; import io, pandas as pd; print(pd.read_parquet(io.BytesIO(m.download_bytes('normalized/<job_id>/envelopes.parquet'))).head())"
+```
+
+---
 
 ## Tests
 
-```
-pytest
+```bash
+pytest -q
 ```
 
-Auth, token caching, and HMAC behavior are covered by unit tests (24 passing as of Oct 26).
+Tests cover HMAC auth, the retry and rate-limit logic, extraction paging and checkpoints,
+all four normalizers, the normalization service, the serializers, the MinIO client,
+and the normalization API. DocuSign and MinIO are mocked, so no network is needed.
+
+---
+
+## Known limitations
+
+- The "already running" guard for normalization works inside one process. Running several
+  uvicorn workers would need a database-backed lock.
+- Normalized rows are stored in `Job.result`, which replaces the scan job's earlier result value.
+- Raw pages live under `data/`. If that folder is lost, completed scans can no longer be
+  normalized (the API returns `409`); run a new scan.
+
+---
 
 ## Security notes
 
-- Never commit `.env` or the RSA private key.
-- Access tokens and HMAC keys are not written to logs.
+- Keep `.env` and `secrets/private.key` out of git.
+- Use real, random HMAC keys outside local development.

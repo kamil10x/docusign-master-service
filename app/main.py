@@ -8,6 +8,7 @@ from app.api import health, validate_credentials
 from app.api.validate import router as validate_router
 from app.api.scan import router as scan_router
 from app.api.normalization import router as normalization_router
+from app.api.maintenance import router as maintenance_router
 
 
 app = FastAPI(title="DocuSign Master Service")
@@ -33,3 +34,5 @@ app.include_router(
 
 # Scan router: authentication handled by HMAC middleware
 app.include_router(scan_router)
+
+app.include_router(maintenance_router)

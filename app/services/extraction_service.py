@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from app.services.job_service import JobService
 from app.services.scan_stages import JobStatus, ScanStage, next_stage, stages_from
 from app.utils.raw_storage import RawPageWriter
+from app.docusign.exceptions import DocuSignAPIError, DocuSignRateLimitError
+from app.utils.retry import is_retryable
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +99,27 @@ class ExtractionService:
     def _check_cancelled(self, job_id: Any) -> None:
         if self.jobs.get_status(job_id) == JobStatus.CANCELLED:
             raise ScanCancelled()
+        
+    @staticmethod
+    def _is_skippable(exc: DocuSignAPIError) -> bool:
+        """Per-envelope problems are skipped; systemic ones fail the job."""
+        if isinstance(exc, DocuSignRateLimitError):
+            return False
+        if exc.status_code is None:  # network error
+            return False
+        return exc.status_code not in (401, 403)
+
+    def _record_failure(self, job_id, resource: str, envelope_id: str, exc: DocuSignAPIError) -> None:
+        attempts = getattr(self.client, "_max_attempts", 1)
+        self.jobs.record_failed_call(
+            service="docusign",
+            method="GET",
+            endpoint=exc.endpoint or f"/envelopes/{envelope_id}/{resource}",
+            job_id=job_id,
+            status_code=exc.status_code,
+            error_message=f"{exc} | {(exc.body or '')[:500]}",
+            retry_count=attempts - 1 if is_retryable(exc) else 0,
+        )
 
     # ---- paged stages (envelopes, templates) --------------------------------
     def _scan_paged(self, job_id, stage, resource, items_key, fetch, writer, cursor, counts) -> None:
@@ -153,7 +176,20 @@ class ExtractionService:
         while index < len(ids):
             self._check_cancelled(job_id)
             envelope_id = ids[index]
-            data = fetch(envelope_id)
+            try:
+                data = fetch(envelope_id)
+            except DocuSignAPIError as exc:
+                self._record_failure(job_id, resource, envelope_id, exc)
+                if not self._is_skippable(exc):
+                    raise  # job fails, stays resumable from this index
+                logger.warning("job %s: skipping %s for %s (%s)", job_id, resource, envelope_id, exc)
+                key = f"{resource}_failed"
+                counts[key] = counts.get(key, 0) + 1
+                index += 1
+                self.jobs.save_checkpoint(job_id, stage, {"index": index}, counts)
+                self._beat(job_id)
+                continue
+
             writer.write_page(resource, index, {"envelopeId": envelope_id, **data})
             counts[resource] = counts.get(resource, 0) + 1
             index += 1

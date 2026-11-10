@@ -4,6 +4,10 @@
 import asyncio
 import logging
 
+from datetime import datetime, timedelta, timezone
+
+from app.config import settings
+
 from app.db.session import SessionLocal
 from app.docusign.auth_client import auth_client
 from app.docusign.client import DocuSignClient
@@ -13,6 +17,14 @@ from app.services.scan_stages import JobStatus
 
 logger = logging.getLogger(__name__)
 
+def _heartbeat_is_fresh(job) -> bool:
+    beat = job.updated_at
+    if beat is None:
+        return False
+    if beat.tzinfo is None:
+        beat = beat.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - beat
+    return age < timedelta(minutes=settings.JOB_CRASH_TIMEOUT_MINUTES)
 
 def run_scan_in_background(job_id: str) -> None:
     db = SessionLocal()
@@ -26,10 +38,11 @@ def run_scan_in_background(job_id: str) -> None:
             logger.error("Job %s not found", job_id)
             return
 
-        if job.status == JobStatus.CANCELLED:
+        if job.status in (JobStatus.CANCELLED, JobStatus.COMPLETED):
             return
 
-        if job.status in (JobStatus.COMPLETED, JobStatus.FAILED):
+        if job.status == JobStatus.RUNNING and _heartbeat_is_fresh(job):
+            logger.warning("Job %s is already running; ignoring duplicate start", job_id)
             return
 
         # Retrieve the default DocuSign account.

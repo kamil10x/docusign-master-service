@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import AuditLog, Job, JobCheckpoint
+from app.db.models import AuditLog, FailedExternalCall, Job, JobCheckpoint
 from app.services.scan_stages import JobStatus
 
 
@@ -171,7 +171,8 @@ class JobService:
             resource_type=stage_value,
             cursor=checkpoint_cursor,
             items_processed=sum(
-                (counts or {}).values()
+                v for k, v in (counts or {}).items()
+                if not k.endswith("_failed")
             ),
         )
 
@@ -233,3 +234,32 @@ class JobService:
 
         self.db.add(audit_log)
         self.db.commit()
+
+    # ============================================================
+    # FAILED EXTERNAL CALLS (DLQ)
+    # ============================================================
+
+    def record_failed_call(
+        self,
+        service: str,
+        method: str,
+        endpoint: str,
+        *,
+        job_id: Any = None,
+        status_code: Optional[int] = None,
+        error_message: Optional[str] = None,
+        retry_count: int = 0,
+    ) -> FailedExternalCall:
+        row = FailedExternalCall(
+            job_id=_uuid(job_id) if job_id is not None else None,
+            service=service,
+            method=method.upper(),
+            endpoint=endpoint,
+            status_code=status_code,
+            error_message=(error_message or "")[:1000] or None,
+            retry_count=retry_count,
+        )
+        self.db.add(row)
+        self.db.commit()
+        self.db.refresh(row)
+        return row

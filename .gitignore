@@ -91,3 +91,6 @@ secrets/
 __pycache__/
 .venv/
 .pytest_cache/data/ 
+
+app/api/validate_credentials.py
+

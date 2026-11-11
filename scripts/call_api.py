@@ -27,8 +27,9 @@ BASE = "http://127.0.0.1:8000"
 def main() -> None:
     method, path, *rest = sys.argv[1:]
     method = method.upper()
+    path, _, raw_query = path.partition("?")  # sign the path only, like the server
     body = b""
-    query = {}
+    query = dict(urllib.parse.parse_qsl(raw_query))
     for arg in rest:
         if arg.startswith("{"):
             body = json.dumps(json.loads(arg), separators=(",", ":")).encode()

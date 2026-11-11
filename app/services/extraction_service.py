@@ -32,8 +32,10 @@ class ExtractionService:
 
     # ---- public -----------------------------------------------------------
     def start_scan(self, params: dict):
-        return self.jobs.create_job("scan", params)
-
+        job = self.jobs.create_job("scan", params)
+        self.jobs.add_audit_log(job.id, "scan_created", {"params": params})
+        return job
+    
     def run_scan(self, job_id: Any) -> None:
         self._execute_scan(job_id)
 

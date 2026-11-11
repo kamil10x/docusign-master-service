@@ -9,6 +9,7 @@ from app.api.validate import router as validate_router
 from app.api.scan import router as scan_router
 from app.api.normalization import router as normalization_router
 from app.api.maintenance import router as maintenance_router
+from app.api.audit import router as audit_router
 
 
 app = FastAPI(title="DocuSign Master Service")
@@ -36,3 +37,5 @@ app.include_router(
 app.include_router(scan_router)
 
 app.include_router(maintenance_router)
+
+app.include_router(audit_router)

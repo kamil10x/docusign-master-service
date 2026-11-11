@@ -94,7 +94,8 @@ class NormalizationService:
                 f"No raw extraction data found for job {job_id}. "
                 "Run a new scan for this job's data first."
             )
-
+            
+        self.jobs.add_audit_log(job_id, "normalization_started", {})
         normalized_data: dict[str, list[dict[str, Any]]] = {}
 
         try:

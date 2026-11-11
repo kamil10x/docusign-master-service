@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import AuditLog, FailedExternalCall, Job, JobCheckpoint
 from app.services.scan_stages import JobStatus
+from app.services.audit_service import AuditService
 
 
 def _now() -> datetime:
@@ -222,18 +223,14 @@ class JobService:
         job_id: Any,
         action: str,
         details: Optional[dict] = None,
+        actor: Optional[str] = None,
     ) -> None:
 
         self._require_job(job_id)
 
-        audit_log = AuditLog(
-            job_id=_uuid(job_id),
-            action=action,
-            details=details or {},
+        AuditService(self.db).log_event(
+            action, job_id=job_id, actor=actor, details=details
         )
-
-        self.db.add(audit_log)
-        self.db.commit()
 
     # ============================================================
     # FAILED EXTERNAL CALLS (DLQ)
@@ -262,4 +259,14 @@ class JobService:
         self.db.add(row)
         self.db.commit()
         self.db.refresh(row)
+        AuditService(self.db).log_event(
+            "failed_call_recorded",
+            job_id=job_id,
+            details={
+                "failed_call_id": row.id,
+                "service": service,
+                "endpoint": endpoint,
+                "status_code": status_code,
+            },
+        )
         return row

@@ -37,11 +37,11 @@ def _job_view(job, checkpoint=None) -> dict:
 
 @router.post("", status_code=202)
 def start_scan(req: ScanRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    print('DEBUG: start_scan entered', flush=True)
+    #print('DEBUG: start_scan entered', flush=True)
     params = {k: v for k, v in req.model_dump().items() if v is not None}
-    print('DEBUG: creating scan job', flush=True)
+    #print('DEBUG: creating scan job', flush=True)
     job = JobService(db).create_job("scan", params)
-    print('DEBUG: scan job created:', job.id, flush=True)
+    #print('DEBUG: scan job created:', job.id, flush=True)
     background_tasks.add_task(run_scan_in_background, str(job.id))  # sync fn -> runs in threadpool
     return {"job_id": str(job.id), "status": job.status}
 

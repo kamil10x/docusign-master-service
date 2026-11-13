@@ -38,7 +38,7 @@ def main() -> None:
             query[k] = v
 
     timestamp = str(int(time.time()))
-    # signs the path only (no query string), same as call_scan.py
+    # signs the path only (no query string), same as the server
     signature = compute_signature(get_settings().hmac_secret, timestamp, method, path, body)
 
     url = BASE + path + (("?" + urllib.parse.urlencode(query)) if query else "")

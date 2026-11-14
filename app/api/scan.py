@@ -70,3 +70,14 @@ def cancel_scan(job_id: str, db: Session = Depends(get_db)):
     if job is None:
         raise HTTPException(404, "job not found")
     return {"job_id": job_id, "status": job.status}
+
+
+@router.delete("/{job_id}/remove")
+@router.delete("/{job_id}")
+def remove_scan(job_id: str, db: Session = Depends(get_db)):
+    try:
+        return JobService(db).delete_job(job_id)
+    except LookupError:
+        raise HTTPException(404, "job not found")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))

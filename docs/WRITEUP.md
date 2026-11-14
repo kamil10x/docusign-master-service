@@ -84,9 +84,23 @@ pytest -q                                          # 179 passed
 docker compose up -d --build
 docker compose exec app alembic upgrade head
 curl http://localhost:8000/api/health
-python call_scan.py                                # start a scan, note the job_id
+python scripts/call_api.py POST /api/scan '{"from_date":"2024-01-01"}'   # start a scan, note the job_id
 python -m scripts.call_normalization <job_id>      # normalize and export
 python -m scripts.call_normalization <job_id> results
 ```
 
 See `README.md` for configuration and the full API, `DESIGN.md` for the design, and `docs/PROGRESS.md` for the day-by-day record.
+
+
+## 10. Deviations from the spec and items not implemented
+
+**Deviations**
+- **MinIO layout:** exports go to `normalized/{job_id}/{table}.parquet` and `.json`. The spec suggests grouping by account and processing date; this implementation groups by job id, which keeps each run's output easy to find, and paths are deterministic so re-runs overwrite cleanly.
+- **List runs:** served by `GET /api/maintenance/jobs` rather than `/scan/list`.
+- **Remove run:** `DELETE /api/scan/{job_id}/remove` (alias `/api/scan/{job_id}`). It returns 409 for active jobs, deletes the job's checkpoints and failed-call records, and keeps audit history with the job reference cleared. It does not delete raw pages on disk or exports in MinIO.
+- **HMAC:** two keys can be active for rotation; the signature covers method, path, timestamp and body, with no nonce cache and no separate read-only role.
+
+**Not implemented (optional appendix items)**
+- `GET /scan/statistics`, `GET /normalization/{id}/tables`, `GET /normalization/supported-objects`, `GET /api/stats`, `GET /audit/stats`
+- Fernet `Encrypter` utility and production fail-fast config validation
+- Nomad/Vault deployment; the project runs locally with Docker Compose

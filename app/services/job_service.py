@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models import AuditLog, FailedExternalCall, Job, JobCheckpoint
@@ -13,6 +13,9 @@ from app.services.audit_service import AuditService
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+ACTIVE_STATUSES = (JobStatus.PENDING, JobStatus.RUNNING)
 
 
 def _uuid(value: Any) -> UUID:
@@ -127,6 +130,71 @@ class JobService:
             self.db.refresh(job)
 
         return job
+    
+    def is_active(self, job: Job) -> bool:
+        return job.status in ACTIVE_STATUSES
+
+    def delete_job(self, job_id: Any) -> dict:
+        """
+        Remove one run. Raises:
+            LookupError - job id is malformed or the job does not exist
+            ValueError  - job is still PENDING/RUNNING (cancel it first)
+
+        Deletes the job's checkpoints and failed-call records, keeps its audit
+        trail (job_id is detached, not deleted), then deletes the job row.
+        All DB changes happen in one transaction.
+        """
+        try:
+            jid = _uuid(job_id)
+        except ValueError:
+            raise LookupError(f"Job not found: {job_id}")
+
+        job = self.db.get(Job, jid)
+        if job is None:
+            raise LookupError(f"Job not found: {job_id}")
+
+        if self.is_active(job):
+            raise ValueError(
+                f"Cannot remove job in status {job.status}; cancel it first"
+            )
+
+        previous_status = job.status
+
+        try:
+            checkpoints = self.db.execute(
+                delete(JobCheckpoint).where(JobCheckpoint.job_id == jid)
+            ).rowcount
+            failed_calls = self.db.execute(
+                delete(FailedExternalCall).where(FailedExternalCall.job_id == jid)
+            ).rowcount
+            audit_detached = self.db.execute(
+                update(AuditLog)
+                .where(AuditLog.job_id == jid)
+                .values(job_id=None)
+            ).rowcount
+            self.db.delete(job)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+        result = {
+            "job_id": str(jid),
+            "removed": True,
+            "previous_status": previous_status,
+            "deleted": {
+                "checkpoints": checkpoints,
+                "failed_calls": failed_calls,
+            },
+            "audit_logs_retained": audit_detached,
+        }
+
+        AuditService(self.db).log_event(
+            "scan_removed",
+            job_id=None,
+            details={"removed_job_id": str(jid), **result},
+        )
+        return result
 
     def update_heartbeat(self, job_id: Any) -> None:
         job = self._require_job(job_id)
